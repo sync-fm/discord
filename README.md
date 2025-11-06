@@ -1,12 +1,12 @@
 # SyncFM Discord App
 
-A Discord user-installable app that converts music links (Spotify, Apple Music, YouTube Music) to SyncFM universal links via context menus.
+A Discord user-installable app that converts music links (Spotify, Apple Music, YouTube Music) to SyncFM universal links via message context menus or the `/share` slash command.
 
 ## stuffs
 
 ### Register Commands
 
-Before running the bot, register the context menu command:
+Before running the bot, register the commands:
 
 ```bash
 bun run register
@@ -23,6 +23,11 @@ To clear all commands:
 ```bash
 bun run clear-commands
 ```
+
+### Using the Commands
+
+- **Convert to SyncFM (context menu)** — Right-click any message containing a supported music URL and choose “Convert to SyncFM” to post the converted embed.
+- **/share** — Run `/share` with a supported URL to instantly post the converted SyncFM embed to the current channel.
 
 ### Running the Bot
 

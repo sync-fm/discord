@@ -1,15 +1,12 @@
 import {
   Client,
   GatewayIntentBits,
-  ContextMenuCommandBuilder,
-  ApplicationCommandType,
-  REST,
-  Routes,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
 } from 'discord.js';
+import type { ChatInputCommandInteraction, MessageContextMenuCommandInteraction } from 'discord.js';
 import { PostHog } from 'posthog-node';
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
@@ -309,6 +306,101 @@ const buildServiceButtons = async (
   return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 };
 
+const buildSyncFMEmbed = (conversion: SyncFMConversionResult, requestedBy: string): EmbedBuilder => {
+  const displayTitle = conversion.type === 'artist'
+    ? conversion.entity.name ?? 'Unknown Artist'
+    : conversion.entity.title ?? 'Unknown Title';
+
+  const embed = new EmbedBuilder()
+    .setColor(0xf67c04)
+    .setTitle(displayTitle)
+    .setURL(conversion.link)
+    .setFooter({ text: `Powered by SyncFM • Requested by ${requestedBy}` })
+    .setTimestamp(new Date());
+
+  if (conversion.type !== 'artist') {
+    const artists = conversion.entity.artists ?? [];
+    if (artists.length > 0) {
+      embed.addFields({
+        name: 'Artists',
+        value: artists.join(', ').slice(0, 1024) || 'Unknown Artist',
+        inline: false,
+      });
+    }
+  }
+
+  if (conversion.entity.album) {
+    embed.addFields({ name: 'Album', value: conversion.entity.album, inline: false });
+  }
+
+  embed.addFields({ name: 'Type', value: conversion.type.toUpperCase(), inline: true });
+  embed.addFields({ name: 'SyncFM Link', value: `[Open in SyncFM](${conversion.link})`, inline: true });
+
+  if (conversion.entity.imageUrl) {
+    embed.setThumbnail(conversion.entity.imageUrl);
+  }
+
+  return embed;
+};
+
+type ConversionAnalyticsBase = Record<string, unknown>;
+type SupportedInteraction = MessageContextMenuCommandInteraction | ChatInputCommandInteraction;
+
+const processSyncFMConversion = async (
+  interaction: SupportedInteraction,
+  musicUrl: string,
+  analyticsBase: ConversionAnalyticsBase,
+  distinctId: string,
+) => {
+  const sourceService = detectMusicServiceFromUrl(musicUrl) ?? 'unknown';
+
+  captureAnalyticsEvent('discord-syncfm-conversion-start', distinctId, {
+    ...analyticsBase,
+    sourceService,
+    sourceUrl: musicUrl,
+    timestamp: Date.now(),
+  });
+
+  const conversionStart = performance.now();
+  const conversion = await convertToSyncFM(musicUrl);
+  const conversionEnd = performance.now();
+  const durationMs = Math.max(0, conversionEnd - conversionStart);
+
+  if (conversion) {
+    const embed = buildSyncFMEmbed(conversion, interaction.user.tag);
+    const serviceButtons = await buildServiceButtons(conversion);
+
+    captureAnalyticsEvent('discord-syncfm-conversion-success', distinctId, {
+      ...analyticsBase,
+      sourceService,
+      syncId: conversion.entity.syncId,
+      entityType: conversion.type,
+      hasShortcode: Boolean(conversion.entity.shortcode),
+      availableServices: Object.keys(conversion.entity.externalIds ?? {}),
+      syncfmLink: conversion.link,
+      durationMs,
+    });
+
+    await interaction.editReply({
+      content: '',
+      embeds: [embed],
+      components: serviceButtons ? [serviceButtons] : [],
+    });
+  } else {
+    captureAnalyticsEvent('discord-syncfm-conversion-failed', distinctId, {
+      ...analyticsBase,
+      sourceService,
+      sourceUrl: musicUrl,
+      durationMs,
+    });
+    await interaction.editReply({
+      content: `${formatEmoji(DISCORD_EMOJIS.error)} Failed to convert link. The URL might not be supported or the service is unavailable.`,
+      embeds: [],
+      components: [],
+    });
+  }
+};
+
 // Create Discord client with necessary intents
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -367,86 +459,48 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      const sourceService = detectMusicServiceFromUrl(musicUrl) ?? 'unknown';
-
-      captureAnalyticsEvent('discord-syncfm-conversion-start', distinctId, {
+      await processSyncFMConversion(interaction, musicUrl, {
         ...analyticsBase,
-        sourceService,
-        sourceUrl: musicUrl,
-        timestamp: Date.now(),
+        commandName: 'Convert to SyncFM',
+      }, distinctId);
+    }
+  }
+
+  if (interaction.isChatInputCommand() && interaction.commandName === 'share') {
+    const distinctId = interaction.user?.id ?? 'anonymous';
+    const analyticsBase = {
+      guildId: interaction.guildId ?? 'dm',
+      channelId: interaction.channelId,
+      userId: interaction.user.id,
+      commandName: 'share',
+    } satisfies ConversionAnalyticsBase;
+
+    captureAnalyticsEvent('discord-syncfm-command-invoked', distinctId, analyticsBase);
+
+    const rawInput = interaction.options.getString('url', true);
+    const musicUrl = extractMusicUrl(rawInput ?? '') ?? null;
+
+    if (!musicUrl) {
+      captureAnalyticsEvent('discord-syncfm-no-supported-link', distinctId, {
+        ...analyticsBase,
+        sourceUrl: rawInput,
       });
 
-      const conversionStart = performance.now();
-      const conversion = await convertToSyncFM(musicUrl);
-      const conversionEnd = performance.now();
-      const durationMs = Math.max(0, conversionEnd - conversionStart);
-
-      if (conversion) {
-        const displayTitle = conversion.type === 'artist'
-          ? conversion.entity.name ?? 'Unknown Artist'
-          : conversion.entity.title ?? 'Unknown Title';
-
-        const embed = new EmbedBuilder()
-          .setColor(0xf67c04)
-          .setTitle(displayTitle)
-          .setURL(conversion.link)
-          .setFooter({ text: 'Powered by SyncFM • Requested by ' + interaction.user.tag })
-          .setTimestamp(new Date());
-
-        if (conversion.type !== 'artist') {
-          const artists = conversion.entity.artists ?? [];
-          if (artists.length > 0) {
-            embed.addFields({
-              name: 'Artists',
-              value: artists.join(', ').slice(0, 1024) || 'Unknown Artist',
-              inline: false,
-            });
-          }
-        }
-
-        if (conversion.entity.album) {
-          embed.addFields({ name: 'Album', value: conversion.entity.album, inline: false });
-        }
-
-        embed.addFields({ name: 'Type', value: conversion.type.toUpperCase(), inline: true });
-        embed.addFields({ name: 'SyncFM Link', value: `[Open in SyncFM](${conversion.link})`, inline: true });
-
-        if (conversion.entity.imageUrl) {
-          embed.setThumbnail(conversion.entity.imageUrl);
-        }
-
-        const serviceButtons = await buildServiceButtons(conversion);
-
-        captureAnalyticsEvent('discord-syncfm-conversion-success', distinctId, {
-          ...analyticsBase,
-          sourceService,
-          syncId: conversion.entity.syncId,
-          entityType: conversion.type,
-          hasShortcode: Boolean(conversion.entity.shortcode),
-          availableServices: Object.keys(conversion.entity.externalIds ?? {}),
-          syncfmLink: conversion.link,
-          durationMs,
-        });
-
-        await interaction.editReply({
-          content: '',
-          embeds: [embed],
-          components: serviceButtons ? [serviceButtons] : [],
-        });
-      } else {
-        captureAnalyticsEvent('discord-syncfm-conversion-failed', distinctId, {
-          ...analyticsBase,
-          sourceService,
-          sourceUrl: musicUrl,
-          durationMs,
-        });
-        await interaction.editReply({
-          content: `${formatEmoji(DISCORD_EMOJIS.error)} Failed to convert link. The URL might not be supported or the service is unavailable.`,
-          embeds: [],
-          components: [],
-        });
-      }
+      await interaction.reply({
+        content: `${formatEmoji(DISCORD_EMOJIS.error)} Please provide a supported music link from Spotify, Apple Music, or YouTube Music.`,
+        ephemeral: true,
+      });
+      return;
     }
+
+    await interaction.deferReply();
+    await interaction.editReply({
+      content: `${formatEmoji(DISCORD_EMOJIS.loading)} Converting your link...`,
+      components: [],
+      embeds: [],
+    });
+
+    await processSyncFMConversion(interaction, musicUrl, analyticsBase, distinctId);
   }
 });
 

@@ -1,25 +1,52 @@
 /**
- * Script to register Discord context menu commands
- * Run this once to set up the "Convert to SyncFM" command
+ * Script to register Discord commands for SyncFM
+ * Registers both the "Convert to SyncFM" context menu and the "/share" slash command
  */
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
 
+interface CommandOption {
+  type: number;
+  name: string;
+  description: string;
+  required?: boolean;
+}
+
 interface Command {
   name: string;
   type: number;
+  description?: string;
+  options?: CommandOption[];
   integration_types?: number[];
   contexts?: number[];
 }
 
 // Context menu command for messages
-const command: Command = {
+const contextMenuCommand: Command = {
   name: 'Convert to SyncFM',
   type: 3, // 3 = Message Context Menu
   integration_types: [0, 1], // 0 = Guild Install, 1 = User Install
   contexts: [0, 1, 2], // 0 = Guild, 1 = Bot DM, 2 = Group DM/Private Channel
 };
+
+const shareSlashCommand: Command = {
+  name: 'share',
+  description: 'Convert a music link to SyncFM and share it with the channel',
+  type: 1, // 1 = Slash Command
+  integration_types: [0, 1],
+  contexts: [0, 1, 2],
+  options: [
+    {
+      type: 3, // 3 = String option
+      name: 'url',
+      description: 'Music link from Spotify, Apple Music, or YouTube Music',
+      required: true,
+    },
+  ],
+};
+
+const commands: Command[] = [contextMenuCommand, shareSlashCommand];
 
 async function registerCommands() {
   if (!DISCORD_BOT_TOKEN) {
@@ -38,12 +65,12 @@ async function registerCommands() {
     console.log('Registering context menu command...');
 
     const response = await fetch(url, {
-      method: 'POST',
+      method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
       },
-      body: JSON.stringify(command),
+      body: JSON.stringify(commands),
     });
 
     if (!response.ok) {
@@ -53,12 +80,20 @@ async function registerCommands() {
       process.exit(1);
     }
 
-    const result = await response.json() as any;
-    console.log('Successfully registered command:', result.name);
-    console.log('Command ID:', result.id);
-    console.log('Command Type:', result.type === 3 ? 'Message Context Menu' : 'Unknown');
-    console.log('Integration Types:', result.integration_types || 'Not specified');
-    console.log('Contexts:', result.contexts || 'Not specified');
+    const result = await response.json() as any[];
+    console.log('Successfully registered commands:');
+    for (const cmd of result) {
+      console.log(`- ${cmd.name} (ID: ${cmd.id})`);
+      console.log(`  Type: ${cmd.type === 3 ? 'Message Context Menu' : cmd.type === 1 ? 'Slash Command' : 'Unknown'}`);
+      console.log(`  Integration Types: ${cmd.integration_types || 'Not specified'}`);
+      console.log(`  Contexts: ${cmd.contexts || 'Not specified'}`);
+      if (Array.isArray(cmd.options) && cmd.options.length > 0) {
+        console.log('  Options:');
+        for (const option of cmd.options) {
+          console.log(`    - ${option.name}: ${option.description}`);
+        }
+      }
+    }
   } catch (error) {
     console.error('Error registering command:', error);
     process.exit(1);

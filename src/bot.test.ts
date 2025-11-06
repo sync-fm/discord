@@ -90,6 +90,12 @@ describe('Music URL Detection', () => {
     expect(result).toBe('https://open.spotify.com/track/3n3Ppam7vgaVa1iaRUc9Lp');
   });
 
+  test('handles URLs wrapped in angle brackets', () => {
+    const message = '<https://open.spotify.com/track/3n3Ppam7vgaVa1iaRUc9Lp>';
+    const result = extractMusicUrl(message);
+    expect(result).toBe('https://open.spotify.com/track/3n3Ppam7vgaVa1iaRUc9Lp');
+  });
+
   test('detects regular YouTube URLs when explicitly enabled', () => {
     const urls = [
       'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
