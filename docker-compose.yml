@@ -1,0 +1,27 @@
+version: '3.11'
+
+services:
+  syncfm-discord:
+    build: .
+    container_name: syncfm-discord
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_ENABLE_YOUTUBE: ${DISCORD_ENABLE_YOUTUBE:-false}
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-https://app.posthog.com}
+      POSTHOG_DISABLED: ${POSTHOG_DISABLED:-true}
+      POSTHOG_FLUSH_AT: ${POSTHOG_FLUSH_AT:-1}
+      POSTHOG_FLUSH_INTERVAL_MS: ${POSTHOG_FLUSH_INTERVAL_MS:-1000}
+    healthcheck:
+      test: ["CMD", "bun", "--version"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
